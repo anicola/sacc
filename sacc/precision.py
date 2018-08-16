@@ -26,31 +26,14 @@ class Precision(object):
             
         self.mode=mode
         self.binning=binning
-        
 
-    def CullMatrix(self,ndxlist):
-        if self.cmatrix is not None:
-            _getCovarianceFromPrecision()
-        if self.mode=="diagonal":
-            self.cmatrix=self.cmatrix(ndxlist)
-        elif (self.mode in ['dense','ell_block_diagonal']):
-            N=len(ndxlist)
-            cmatrix=np.zeros((N,N))
-            ## there should be a better way of doing this:
-            for i in range(N):
-                cmatrix[i,ndx]=self.cmatrix[ndx[i],ndx]
-            self.cmatrix=cmatrix
-
-        if self.pmatrix is not None:
-            _getPrecisionFromCovariance()
-        
     def _getCovarianceFromPrecision(self):
         if self.pmatrix is None:
             print ("Consider getting a job in McDonalds.")
             raise AssertionErrror()
         if self.mode=='diagonal':
             self.cmatrix=1/la.inv(self.pmatrix)
-        elif (self.mode in ['dense','ell_block_diagonal']):
+        elif (self.mode in ['dense', 'ell_block_diagonal']):
             self.cmatrix=la.inv(self.pmatrix)
         else:
             raise NotImplementedError()
@@ -66,12 +49,33 @@ class Precision(object):
         else:
             raise NotImplementedError()
 
-    def precisionMatrix(self):
-        if self.pmatrix is None:
-            self._getPrecisionFromCovariance()
-        return self.pmatrix
-    
+    def CullMatrix(self,ndxlist):
+        if self.pmatrix is not None:
+            self._getCovarianceFromPrecision()
             
+        if self.cmatrix is not None:
+            if self.mode=="diagonal":
+                N=len(ndxlist)
+                cmatrix=np.zeros((N,N))
+                for i in range(N):
+                    cmatrix[i,i]=self.cmatrix[ndxlist[i], ndxlist[i]]
+                self.cmatrix=cmatrix
+                #self.cmatrix=self.cmatrix(ndxlist)
+            elif (self.mode in ['dense','ell_block_diagonal']):
+                N=len(ndxlist)
+                cmatrix=np.zeros((N,N))
+                ## there should be a better way of doing this:
+                for i in range(N):
+                    cmatrix[i,:]=self.cmatrix[ndxlist[i],ndxlist]
+                self.cmatrix=cmatrix
+        else:
+            print ("cmatrix is still None")
+        self._getPrecisionFromCovariance()
+        if self.cmatrix is None and self.pmatrix is None:
+            print ("you don't have cmatrix nor pmatrix")
+        return self
+
+
     def saveToHDF (self, group): ## might need binning for certain modes of saving
         ## if we have covariance matrix, save that one, otherwise save precision
         if self.cmatrix is not None:
@@ -104,10 +108,18 @@ class Precision(object):
         
     @classmethod
     def loadFromHDF (Precision, group, binning=None):
-        D=group['error']
+        if 'error' in group.keys():
+            D=group['error']
+            data=group['error'].value
+        else:
+            D=group['precision']
+            data=group['precision'].value
         mode=D.attrs['type'].decode()
-        loadingC=D.attrs['is_covariance']
-        data=group['error'].value
+        if 'is_covariance' in D.attrs.keys():
+            loadingC=D.attrs['is_covariance']
+        else:
+            loadingC=False
+        #data=group['error'].value
         if mode=="dense":
             matrix=data
         elif mode=="diagonal":
@@ -126,5 +138,4 @@ class Precision(object):
                         matrix[j,i]=vec[k]
                         k+=1
         return Precision(matrix,mode,is_covariance=loadingC,binning=binning)
-        
         

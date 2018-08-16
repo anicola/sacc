@@ -1,19 +1,48 @@
-#
-# SACC : Tracer class
-#
+e"""
+SACC is the main container class of the SACC module.
+
+"""
+
+
 from __future__ import print_function, division
-from tracer import Tracer
-from binning import Binning
-from meanvec import MeanVec
-from precision import Precision
+from .tracer import Tracer
+from .binning import Binning
+from .meanvec import MeanVec
+from .precision import Precision
 import numpy as np
 import h5py
 import sys
-PY3 = sys.version_info[0]==3
+PY3 = sys.version_info[0] == 3
+
 
 class SACC(object):
+    
+    ## format version, bump up every time you break thins
+    ## irreparrably
     _format_version=1
 
+
+    """
+    The main container class for 2pt measurements.
+
+    Parameters
+    ----------
+
+    tracers : list of Tracer objects
+       List of tracer objects used in the measurement and referenced in 
+       binning parameter
+    binning : Binning object
+       Binning object describing what measurement does each index in the mean
+       vector and precision matrix contain
+    mean : array_like or MeanVec object
+       Vector representing the actual measurement, the mean of the gaussian.
+       If not a MeanVec object, will try to cast it into one 
+    precision: Precision object
+       Object representing the precision (i.e. inverse covariance) matrix.
+
+    """
+
+    
     def __init__ (self, tracers, binning, mean=None, precision=None, meta={}):
         self.tracers=tracers
         self.binning=binning
@@ -25,45 +54,7 @@ class SACC(object):
         self.mean=mean
         self.precision=precision
         self.meta=meta
-        #self.windows=windows
-        #if windows is not None:
-            #print ("Windows not yet implemented. Will be ignored.")
-
-    def cut_range(self,zmin=None,zmax=None,lmin=None,lmax=None, diagonal=False):
- 
-        ndx_all=np.arange(len(self.binning.binar))
-        ndx_diagonal=np.where(self.binning.binar['T1']==self.binning.binar['T2']) if diagonal else ndx_all
-        ndx_lmin=np.where(self.binning.binar['ls']>lmin) if lmin is not None else ndx_all
-        ndx_lmax=np.where(self.binning.binar['ls']<lmax) if lmax is not None else ndx_all
-
-        if zmin is not None:
-            tracerndx=[]
-            for i,t in enumerate(self.tracers):
-                if t.z>zmin:
-                    tracerndx.append(i)
-            ndx_zmin=np.where(self.binning.binar['T1'] in tracerndx | self.binning.binar['T2'] in tracerndx)
-        else:
-            ndx_zmin=ndx_all
-
-        if zmax is not None:
-            tracerndx=[]
-            for i,t in enumerate(self.tracers):
-                if t.z<zmax:
-                    tracerndx.append(i)
-            ndx_zmax=np.where(self.binning.binar['T1'] in tracerndx | self.binning.binar['T2'] in tracerndx)
-        else:
-            ndx_zmax=ndx_all
-
-        ## maybe you need set(ndx_diagonal[0])...
-        ndx=set(ndx_diagonal).intersection(set(ndx_lmin)).intersection(set(ndx_lmax)).intersection(set(ndx_zmin)).intersection(set(ndx_zmax))
-        ndx=sorted(ndx)
-        ## at this point you have set of indices.
-        self.binning.binar=self.binning.binar[ndx]
-        self.mean=self.mean.vector[ndx]
-        self.precision.CullMatrix(ndx)
-        assert(len(self.binning.binar)==len(self.mean))
-
-
+        
     def get_exp_sample_set(self):
         return set([t.exp_sample for t in self.tracers])
         
@@ -108,12 +99,7 @@ class SACC(object):
                       ((self.binning.binar['T1']==t2i) & (self.binning.binar['T2']==t1i)) )
         return ndx
 
-    def lcut_ndx(self,t1i,t2i,lmin,lmax):
-        ndx=np.where( (((self.binning.binar['T1']==t1i) & (self.binning.binar['T2']==t2i)) |
-                      ((self.binning.binar['T1']==t2i) & (self.binning.binar['T2']==t1i)))&
-                      ((self.binning.binar['ls']>=lmin)&(self.binning.binar['ls']<lmax)))
-        return ndx
-
+        
     def sortTracers(self):
         """
         returns a list of tuples, like this
@@ -126,11 +112,14 @@ class SACC(object):
         toret=[]
         for t1i in range(Nt):
             for t2i in range(t1i,Nt):
-                ndx=np.where( ((self.binning.binar['T1']==t1i) & (self.binning.binar['T2']==t2i)) |
-                              ((self.binning.binar['T1']==t2i) & (self.binning.binar['T2']==t1i)) )
-                ells=self.binning.binar['ls'][ndx]
-                if len(ells)>0:
-                    toret.append((t1i,t2i,ells,ndx))
+                ndxx=np.where( ((self.binning.binar['T1']==t1i) & (self.binning.binar['T2']==t2i)) |
+                              ((self.binning.binar['T1']==t2i) & (self.binning.binar['T2']==t1i)) )[0]
+                types=np.unique(self.binning.binar['type'][ndxx])
+                for typ in types :
+                    ndx=ndxx[self.binning.binar['type'][ndxx]==typ]
+                    ells=self.binning.binar['ls'][ndx]
+                    if len(ells)>0:
+                        toret.append((t1i,t2i,typ,ells,ndx))
         return toret
 
     def plot_vector (self, tr_number=None, plot_cross=False, set_logx=True, set_logy=True, show_legend=True, out_name=None):
@@ -168,15 +157,16 @@ class SACC(object):
         
     def saveToHDF (self, filename, save_mean=True, save_precision=True, mean_filename=None, precision_filename=None):
         f=h5py.File(filename,'w')
-        tracer_group=f.create_group("tracers")
         meta=f.create_dataset("meta",data=[])
         meta.attrs.create("_format_version",self._format_version)
         if self.meta is not None:
             for key,value in (self.meta.items() if PY3 else self.meta.iteritems()):
-                meta.attrs.create(key,value)
+                if isinstance(value,str) :
+                    value=value.encode('ascii')
+                meta.attrs.create(key.encode('ascii'),value)
         
         tracer_group=f.create_group("tracers")
-        tracer_group.attrs.create("tracer_list",[t.name for t in self.tracers])
+        tracer_group.attrs.create("tracer_list",[t.name.encode('ascii') for t in self.tracers])
         for t in self.tracers:
             t.saveToHDF(tracer_group)
         self.binning.saveToHDF(f)
@@ -196,7 +186,7 @@ class SACC(object):
         f.close()
        
     @classmethod
-    def loadFromHDF (SACC,filename,mean_filename=None, precision_filename=None, zmin=None, zmax=None, lmin=None, lmax=None):
+    def loadFromHDF (SACC,filename,mean_filename=None, precision_filename=None):
         f=h5py.File(filename,'r')
         fmeta=f['meta'].attrs
         if (fmeta['_format_version']>SACC._format_version):
@@ -233,16 +223,14 @@ class SACC(object):
             fm=h5py.File(precision_filename,'r')
             precision=Precision.loadFromHDF(fm,binning)
         else:
-            if 'precision' in f.keys():
+            if 'error' in f.keys():
                 precision=Precision.loadFromHDF(f,binning)
             else:
                 if 'precision_file_path' in f.attrs.keys():
                     fm=h5py.File(f.attrs['precision_file_path'],'r')
                     precision=Precision.loadFromHDF(fm,binning)
         f.close()
-        S=SACC(tracers,binning,mean,precision,meta)
-        S.cut_range(zmin, zmax, lmin, lmax)
-        return S
+        return SACC(tracers,binning,mean,precision,meta)
 
                     
         
